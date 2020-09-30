@@ -480,6 +480,10 @@ Base.last(df::AbstractDataFrame, n::Integer) = df[max(1,nrow(df)-n+1):nrow(df), 
 Return descriptive statistics for a data frame as a new `DataFrame`
 where each row represents a variable and each column a summary statistic.
 
+By default, the mean, standard deviation, minimum (i.e. 0% quantile), 25% quantile,
+median (i.e. 50% quantile), 75% quantile, maximum (i.e. 100% quantile), number of
+missing values and element type are reported.
+
 # Arguments
 - `df` : the `AbstractDataFrame`
 - `stats::Union{Symbol, Pair}...` : the summary statistics to report.
@@ -518,13 +522,12 @@ access missing values.
 julia> df = DataFrame(i=1:10, x=0.1:0.1:1.0, y='a':'j');
 
 julia> describe(df)
-3×7 DataFrame
-│ Row │ variable │ mean   │ min │ median │ max │ nmissing │ eltype   │
-│     │ Symbol   │ Union… │ Any │ Union… │ Any │ Int64    │ DataType │
-├─────┼──────────┼────────┼─────┼────────┼─────┼──────────┼──────────┤
-│ 1   │ i        │ 5.5    │ 1   │ 5.5    │ 10  │ 0        │ Int64    │
-│ 2   │ x        │ 0.55   │ 0.1 │ 0.55   │ 1.0 │ 0        │ Float64  │
-│ 3   │ y        │        │ 'a' │        │ 'j' │ 0        │ Char     │
+│ Row │ variable │ mean   │ std      │ min │ q25    │ median │ q75    │ max │ nmissing │ eltype   │
+│     │ Symbol   │ Union… │ Union…   │ Any │ Union… │ Union… │ Union… │ Any │ Int64    │ DataType │
+├─────┼──────────┼────────┼──────────┼─────┼────────┼────────┼────────┼─────┼──────────┼──────────┤
+│ 1   │ i        │ 5.5    │ 3.02765  │ 1   │ 3.25   │ 5.5    │ 7.75   │ 10  │ 0        │ Int64    │
+│ 2   │ x        │ 0.55   │ 0.302765 │ 0.1 │ 0.325  │ 0.55   │ 0.775  │ 1.0 │ 0        │ Float64  │
+│ 3   │ y        │        │          │ 'a' │        │        │        │ 'j' │ 0        │ Char     │
 
 julia> describe(df, :min, :max)
 3×3 DataFrame
@@ -564,7 +567,7 @@ function DataAPI.describe(df::AbstractDataFrame, stats::Union{Symbol,
 end
 DataAPI.describe(df::AbstractDataFrame; cols=:) =
     _describe(select(df, cols, copycols=false),
-              [:mean, :min, :median, :max, :nmissing, :eltype])
+              [:mean, :std, :min, :q25, :median, :q75, :max, :nmissing, :eltype])
 
 function _describe(df::AbstractDataFrame, stats::AbstractVector)
     predefined_funs = Symbol[s for s in stats if s isa Symbol]
@@ -644,11 +647,18 @@ end
 function get_stats(col::AbstractVector, stats::AbstractVector{Symbol})
     d = Dict{Symbol, Any}()
 
-    if :q25 in stats || :median in stats || :q75 in stats
-        q = try quantile(col, [.25, .5, .75]) catch; (nothing, nothing, nothing) end
-        d[:q25] = q[1]
-        d[:median] = q[2]
-        d[:q75] = q[3]
+    q25 = :q25 in stats
+    med = :median in stats
+    q75 = :q75 in stats
+    if q25 || med || q75
+        p = Float64[]
+        q25 && push!(p, 0.25)
+        med && push!(p, 0.5)
+        q75 && push!(p, 0.75)
+        q = try quantile(col, p) catch; (nothing, nothing, nothing) end
+        q25 && (d[:q25] = q[1])
+        med && (d[:median] = q[q25+1])
+        q75 && (d[:q75] = q[q25+med+1])
     end
 
     if :min in stats || :max in stats
