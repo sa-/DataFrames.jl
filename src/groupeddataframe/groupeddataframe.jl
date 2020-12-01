@@ -23,7 +23,7 @@ Not meant to be constructed directly, see `groupby`.
 mutable struct GroupedDataFrame{T<:AbstractDataFrame}
     parent::T
     cols::Vector{Symbol}                   # column names used for grouping
-    groups::Vector{Int}                    # group indices for each row in 0:ngroups, 0 skipped
+    groups::Vector{UInt32}                    # group indices for each row in 0:ngroups, 0 skipped
     idx::Union{Vector{Int}, Nothing}       # indexing vector sorting rows into groups
     starts::Union{Vector{Int}, Nothing}    # starts of groups after permutation by idx
     ends::Union{Vector{Int}, Nothing}      # ends of groups after permutation by idx
@@ -195,7 +195,7 @@ function groupby(df::AbstractDataFrame, cols;
     end
     sdf = select(df, idxcols, copycols=false)
 
-    groups = Vector{Int}(undef, nrow(df))
+    groups = Vector{UInt32}(undef, nrow(df))
     ngroups, rhashes, gslots, sorted =
         row_group_slots(ntuple(i -> sdf[!, i], ncol(sdf)), Val(false),
                         groups, skipmissing, sort)

@@ -105,18 +105,18 @@ isequal_row(cols1::Tuple{Vararg{AbstractVector}}, r1::Int,
 # With skipmissing=true, rows with missing values are attributed index 0.
 row_group_slots(cols::Tuple{Vararg{AbstractVector}},
                 hash::Val = Val(true),
-                groups::Union{Vector{Int}, Nothing} = nothing,
+                groups::Union{Vector{UInt32}, Nothing} = nothing,
                 skipmissing::Bool = false,
-                sort::Bool = false)::Tuple{Int, Vector{UInt}, Vector{Int}, Bool} =
+                sort::Bool = false)::Tuple{Int, Vector{UInt}, Vector{UInt32}, Bool} =
     row_group_slots(cols, DataAPI.refpool.(cols), hash, groups, skipmissing, sort)
 
 # Generic fallback method based on open adressing hash table
 function row_group_slots(cols::Tuple{Vararg{AbstractVector}},
                          refpools::Any,
                          hash::Val = Val(true),
-                         groups::Union{Vector{Int}, Nothing} = nothing,
+                         groups::Union{Vector{UInt32}, Nothing} = nothing,
                          skipmissing::Bool = false,
-                         sort::Bool = false)::Tuple{Int, Vector{UInt}, Vector{Int}, Bool}
+                         sort::Bool = false)::Tuple{Int, Vector{UInt}, Vector{UInt32}, Bool}
     @assert groups === nothing || length(groups) == length(cols[1])
     rhashes, missings = hashrows(cols, skipmissing)
     # inspired by Dict code from base cf. https://github.com/JuliaData/DataTables.jl/pull/17#discussion_r102481481
@@ -163,9 +163,9 @@ end
 function row_group_slots(cols::NTuple{N, <:AbstractVector},
                          refpools::NTuple{N, <:AbstractVector},
                          hash::Val{false},
-                         groups::Union{Vector{Int}, Nothing} = nothing,
+                         groups::Union{Vector{UInt32}, Nothing} = nothing,
                          skipmissing::Bool = false,
-                         sort::Bool = false)::Tuple{Int, Vector{UInt}, Vector{Int}, Bool} where N
+                         sort::Bool = false)::Tuple{Int, Vector{UInt}, Vector{UInt32}, Bool} where N
     # Computing neither hashes nor groups isn't very useful,
     # and this method needs to allocate a groups vector anyway
     @assert groups !== nothing && all(col -> length(col) == length(groups), cols)
@@ -211,8 +211,8 @@ function row_group_slots(cols::NTuple{N, <:AbstractVector},
     end
 
     seen = fill(false, ngroups)
-    strides = (cumprod(collect(reverse(ngroupstup)))[end-1:-1:1]..., 1)::NTuple{N, Int}
-    firstinds = map(firstindex, refpools)
+    strides = convert(NTuple{N, UInt32}, (cumprod(collect(reverse(ngroupstup)))[end-1:-1:1]..., 1))::NTuple{N, UInt32}
+    firstinds = map(x -> UInt32(firstindex(x)), refpools)
     if sort
         nminds = map(refpools, missinginds) do refpool, missingind
             missingind > lastindex(refpool) ?
@@ -267,19 +267,19 @@ function row_group_slots(cols::NTuple{N, <:AbstractVector},
             local refs_i
             let i=i # Workaround for julia#15276
                 refs_i = map(refs, missinginds) do ref, missingind
-                    r = Int(ref[i])
+                    r = UInt32(ref[i])
                     if skipmissing
-                        return r == missingind ? -1 : (r > missingind ? r-1 : r)
+                        return r == missingind ? typemax(UInt32) : (r > missingind ? r-one(UInt32) : r)
                     else
                         return r
                     end
                 end
             end
             vals = map((r, s, fi) -> (r-fi) * s, refs_i, strides, firstinds)
-            j = sum(vals) + 1
+            j = sum(vals) + one(UInt32)
             # x < 0 happens with -1, which corresponds to missing
-            if skipmissing && any(x -> x < 0, vals)
-                j = 0
+            if skipmissing && any(x -> x == typemax(UInt32), vals)
+                j = zero(UInt32)
             else
                 seen[j] = true
             end
@@ -288,7 +288,7 @@ function row_group_slots(cols::NTuple{N, <:AbstractVector},
     end
     if !all(seen) # Compress group indices to remove unused ones
         oldngroups = ngroups
-        remap = zeros(Int, ngroups)
+        remap = zeros(UInt32, ngroups)
         ngroups = 0
         @inbounds for i in eachindex(remap, seen)
             ngroups += seen[i]
@@ -296,7 +296,7 @@ function row_group_slots(cols::NTuple{N, <:AbstractVector},
         end
         @inbounds for i in eachindex(groups)
             gix = groups[i]
-            groups[i] = gix > 0 ? remap[gix] : 0
+            groups[i] = gix > zero(UInt32) ? remap[gix] : zero(UInt32)
         end
         # To catch potential bugs inducing unnecessary computations
         @assert oldngroups != ngroups
